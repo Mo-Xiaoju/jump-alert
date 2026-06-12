@@ -18,11 +18,12 @@ class VideoAnalyzer:
         self.threshold_multiplier = threshold_multiplier
         self.target_width = target_width
 
-    def analyze(self, video_path: str) -> list:
+    def analyze(self, video_path: str, progress_callback=None) -> list:
         """分析视频文件，返回惊吓点时间列表。
 
         Args:
             video_path: 视频文件路径。
+            progress_callback: 进度回调函数，接收 (percentage, message) 参数。
 
         Returns:
             惊吓点列表，每个元素为 {"time": 秒数, "intensity": 强度}。
@@ -36,9 +37,13 @@ class VideoAnalyzer:
             fps = 30
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+        if progress_callback:
+            progress_callback(60, f"正在读取视频帧 (0/{total_frames})...")
+
         diffs = []
         prev_frame = None
         frame_count = 0
+        report_interval = max(1, total_frames // 50)  # 每 2% 汇报一次
 
         while True:
             ret, frame = cap.read()
@@ -55,10 +60,20 @@ class VideoAnalyzer:
             prev_frame = gray
             frame_count += 1
 
+            # 汇报视频读取进度（60%~89% 区间）
+            if progress_callback and frame_count % report_interval == 0:
+                pct = 60 + int((frame_count / total_frames) * 29)
+                progress_callback(pct, f"正在读取视频帧 ({frame_count}/{total_frames})...")
+
         cap.release()
 
         if not diffs:
+            if progress_callback:
+                progress_callback(89, "视频分析完成，无有效帧差数据")
             return []
+
+        if progress_callback:
+            progress_callback(89, f"正在分析 {len(diffs)} 帧差数据...")
 
         diffs = np.array(diffs)
         window = max(10, len(diffs) // 100)
@@ -74,6 +89,9 @@ class VideoAnalyzer:
                 })
 
         merged = self._merge_close_points(candidates, min_gap=1.0)
+
+        if progress_callback:
+            progress_callback(89, f"视频分析完成，发现 {len(merged)} 个候选点")
         return merged
 
     @staticmethod

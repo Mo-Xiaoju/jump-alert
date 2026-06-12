@@ -9,7 +9,7 @@ class Detector:
     """检测调度器：负责音视频分离、调用分析器、合并结果。
 
     工作流程：
-    1. 从视频文件中提取音频为 .wav
+    1. 从视频文件中提取音频为 
     2. 将音频传给 AudioAnalyzer 检测爆点
     3. 将视频传给 VideoAnalyzer 检测帧差突变
     4. 合并两个分析器的结果，生成 jump_scares.json
@@ -25,12 +25,13 @@ class Detector:
         self.video_analyzer = VideoAnalyzer()
         self.output_dir = output_dir
 
-    def detect(self, media_path: str, output_path: str = None) -> list:
+    def detect(self, media_path: str, output_path: str = None, progress_callback=None) -> list:
         """执行完整检测流程。
 
         Args:
             media_path: 视频文件路径。
             output_path: 结果 JSON 输出路径，默认生成 jump_scares.json。
+            progress_callback: 进度回调函数，接收 (percentage, message) 参数。
 
         Returns:
             惊吓点列表。
@@ -45,14 +46,29 @@ class Detector:
         audio_path = os.path.join(self.output_dir, "_temp_audio.wav")
 
         try:
+            if progress_callback:
+                progress_callback(10, "正在提取音频...")
             self._extract_audio(media_path, audio_path)
-            audio_results = self.audio_analyzer.analyze(audio_path)
-            video_results = self.video_analyzer.analyze(media_path)
+            
+            if progress_callback:
+                progress_callback(20, "正在分析音频爆点...")
+            audio_results = self.audio_analyzer.analyze(audio_path, progress_callback)
+            
+            if progress_callback:
+                progress_callback(60, "正在分析视频帧差...")
+            video_results = self.video_analyzer.analyze(media_path, progress_callback)
+            
+            if progress_callback:
+                progress_callback(90, "正在合并结果...")
             merged = self._merge_results(audio_results, video_results)
 
+            if progress_callback:
+                progress_callback(95, "正在保存结果...")
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, ensure_ascii=False, indent=2)
 
+            if progress_callback:
+                progress_callback(100, "分析完成")
             return merged
         finally:
             if os.path.exists(audio_path):

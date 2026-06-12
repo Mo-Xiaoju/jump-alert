@@ -8,7 +8,6 @@ from PySide6.QtGui import QImage, QPixmap, QDropEvent, QDragEnterEvent
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
 import sys
 from PySide6.QtWidgets import QApplication
-
 UI_PATH = os.path.join(os.path.dirname(__file__), "main_window.ui")
 
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mkv", ".mov", ".flv", ".wmv", ".webm"}
@@ -20,8 +19,8 @@ def setup_ffmpeg():
         # 打包后运行：ffmpeg 在临时解压目录 sys._MEIPASS 中
         ffmpeg_path = os.path.join(sys._MEIPASS, "ffmpeg.exe")
     else:
-        # 开发环境运行：ffmpeg 在项目根目录
-        ffmpeg_path = os.path.join(os.path.dirname(__file__), "ffmpeg.exe")
+        # 开发环境运行：ffmpeg 在项目根目录（当前文件在 ui/ 下，需向上一级）
+        ffmpeg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "ffmpeg.exe")
     
     if os.path.exists(ffmpeg_path):
         AudioSegment.converter = ffmpeg_path
@@ -34,6 +33,7 @@ class AnalysisWorker(QThread):
     """后台分析线程：执行 Detector 检测流程，避免阻塞 UI。"""
     finished = Signal(list)
     error = Signal(str)
+    progress = Signal(int, str)  # (百分比, 状态消息)
 
     def __init__(self, video_path):
         super().__init__()
@@ -41,13 +41,17 @@ class AnalysisWorker(QThread):
 
     def run(self):
         try:
-            import sys
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             if project_root not in sys.path:
                 sys.path.insert(0, project_root)
             from engine.detector import Detector
+
+            # 定义进度回调函数，将进度转发给 UI 线程
+            def on_progress(pct, msg):
+                self.progress.emit(pct, msg)
+
             detector = Detector()
-            results = detector.detect(self.video_path)
+            results = detector.detect(self.video_path, progress_callback=on_progress)
             self.finished.emit(results)
         except Exception as e:
             self.error.emit(str(e))
@@ -102,7 +106,7 @@ class MainWindow(QMainWindow):
         self.is_playing = False
         self.fps = 30
         self.frame_interval = 0
-        self.last_frame_time = 0
+        
 
         self.audio_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
@@ -248,12 +252,19 @@ class MainWindow(QMainWindow):
         self.worker = AnalysisWorker(self.current_video)
         self.worker.finished.connect(self._on_analysis_finished)
         self.worker.error.connect(self._on_analysis_error)
+        self.worker.progress.connect(self._on_analysis_progress)
         self.worker.start()
+
+    def _on_analysis_progress(self, value, message):
+        """分析进度回调：更新进度条和按钮文字。"""
+        self.ui.progressBar.setValue(value)
+        self.ui.processButton.setText(message)
 
     def _on_analysis_finished(self, results):
         """分析完成回调：显示结果并保存 JSON。"""
         self.ui.processButton.setEnabled(True)
         self.ui.processButton.setText("开始处理")
+        self.ui.progressBar.setValue(0)
 
         output_path = os.path.splitext(self.current_video)[0] + "_jump_scares.json"
         with open(output_path, "w", encoding="utf-8") as f:
@@ -268,6 +279,7 @@ class MainWindow(QMainWindow):
         """分析错误回调：显示错误信息。"""
         self.ui.processButton.setEnabled(True)
         self.ui.processButton.setText("开始处理")
+        self.ui.progressBar.setValue(0)
         QMessageBox.critical(self, "分析失败", f"分析过程中出错:\n{error_msg}")
 
     @staticmethod

@@ -38,6 +38,16 @@
        </widget>
       </item>
       <item>
+       <widget class="QProgressBar" name="progressBar">
+        <property name="value">
+         <number>0</number>
+        </property>
+        <property name="textVisible">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QPushButton" name="processButton">
         <property name="minimumHeight">
          <number>40</number>
