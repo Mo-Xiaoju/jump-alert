@@ -1,11 +1,12 @@
 import librosa
 import numpy as np
+from scipy.signal import find_peaks
 
 
 class AudioAnalyzer:
-    """音频爆点检测器：基于多特征融合（RMS + 频谱通量 + 频谱质心 + 频谱平坦度）检测惊吓点。
+    """音频爆点检测器：基于多特征融合 检测惊吓点。
 
-    通过综合音量、频谱突变、高频成分和噪声特性，提高 Jump Scare 检测准确率。
+    通过综合音量、频谱突变、高频成分、噪声特性和 RMS 峰值几何形状，提高 Jump Scare 检测准确率。
     """
 
     def __init__(
@@ -15,7 +16,8 @@ class AudioAnalyzer:
         flux_quantile=0.85,
         centroid_quantile=0.8,
         flatness_quantile=0.7,
-        min_gap_sec=0.3,
+        prominence_factor=1.2,
+        min_gap_sec=3,
     ):
         """初始化音频分析器。
 
@@ -25,6 +27,7 @@ class AudioAnalyzer:
             flux_quantile: 频谱通量分位数阈值。
             centroid_quantile: 频谱质心分位数阈值。
             flatness_quantile: 频谱平坦度分位数阈值。
+            prominence_factor: RMS 峰值显著性倍数（相对于中位数），越大越严格。
             min_gap_sec: 两个候选事件之间的最小间隔（秒）。
         """
         self.sr = sr
@@ -32,6 +35,7 @@ class AudioAnalyzer:
         self.flux_quantile = flux_quantile
         self.centroid_quantile = centroid_quantile
         self.flatness_quantile = flatness_quantile
+        self.prominence_factor = prominence_factor
         self.min_gap_sec = min_gap_sec
 
     def analyze(self, audio_path: str, progress_callback=None) -> list:
@@ -92,21 +96,44 @@ class AudioAnalyzer:
         centroid_th = np.quantile(spectral_centroid, self.centroid_quantile)
         flatness_th = np.quantile(spectral_flatness, self.flatness_quantile)
 
-        # 5. 组合条件：高冲击 + 高频移 + 够响亮 + 像噪声
+        # 5. 峰值显著性过滤（基于 RMS 轮廓的几何形状）
+        #    用 find_peaks 找出所有局部极大值，只保留 prominence 超过阈值的峰
+        #    prominence = 峰高减去其最低轮廓线，"真正突出"的峰才有高 prominence
+        rms_median = np.median(rms)
+        significant_peaks = find_peaks(rms, prominence=rms_median * self.prominence_factor)[0]
+
+        if progress_callback:
+            progress_callback(48, f"正在筛选显著峰值 (发现 {len(significant_peaks)} 个显著峰)...")
+
+        # 若无显著峰，直接返回
+        if len(significant_peaks) == 0:
+            if progress_callback:
+                progress_callback(59, "音频分析完成，未发现显著峰值")
+            return []
+
+        # 6. 组合条件：高冲击 + 高频移 + 够响亮 + 像噪声
         is_sudden = spectral_flux > flux_th
         is_bright = spectral_centroid > centroid_th
         is_loud = rms > rms_th
         is_noise_like = spectral_flatness > flatness_th
 
+        # 候选帧：在多特征过滤基础上，只保留显著的峰
         candidate_frames = is_sudden & is_bright & is_loud & is_noise_like
+        is_peak = np.zeros_like(candidate_frames, dtype=bool)
+        is_peak[significant_peaks] = True
+        candidate_frames = candidate_frames & is_peak
+
         candidate_idx = np.where(candidate_frames)[0]
 
         if len(candidate_idx) == 0:
             if progress_callback:
-                progress_callback(59, "音频分析完成，未发现候选点")
+                progress_callback(59, "音频分析完成，多特征过滤后无候选点")
             return []
 
-        # 6. 合并间隔过近的点，并计算强度
+        if progress_callback:
+            progress_callback(50, f"多特征过滤完成，剩余 {len(candidate_idx)} 个候选点")
+
+        # 7. 合并间隔过近的点，并计算强度
         merged = []
         last_time = -1000
         total_candidates = len(candidate_idx)

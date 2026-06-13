@@ -55,8 +55,10 @@ class Detector:
             audio_results = self.audio_analyzer.analyze(audio_path, progress_callback)
             
             if progress_callback:
-                progress_callback(60, "正在分析视频帧差...")
-            video_results = self.video_analyzer.analyze(media_path, progress_callback)
+                progress_callback(60, "正在分析视频帧差... (已禁用)")
+            # TODO: 暂时禁用视频分析，仅使用音频领域
+            video_results = []
+            # video_results = self.video_analyzer.analyze(media_path, progress_callback)
             
             if progress_callback:
                 progress_callback(90, "正在合并结果...")
@@ -86,7 +88,7 @@ class Detector:
         audio.export(audio_path, format="wav")
 
     @staticmethod
-    def _merge_results(audio_results: list, video_results: list, time_window: float = 1.0) -> list:
+    def _merge_results(audio_results: list, video_results: list, time_window: float = 2.0) -> list:
         """合并音频和视频分析结果。
 
         规则：
@@ -103,17 +105,18 @@ class Detector:
         """
         merged = []
         used_video = set()
-
+        #这部分匹配音频和视频候选点
         for a in audio_results:
             matched = False
             for vi, v in enumerate(video_results):
                 if vi in used_video:
                     continue
+                #匹配成功，合并为高置信度惊吓点
                 if abs(a["time"] - v["time"]) < time_window:
                     merged.append({
                         "time": round((a["time"] + v["time"]) / 2, 2),
-                        "type": "jumpscare",
-                        "intensity": "high",
+                        "type": "惊吓点",
+                        "intensity": "高",
                         "audio_intensity": a["intensity"],
                         "video_intensity": v["intensity"]
                     })
@@ -121,19 +124,20 @@ class Detector:
                     matched = True
                     break
             if not matched:
+                #未匹配到，单独标记为音频中等高能点
                 merged.append({
                     "time": a["time"],
-                    "type": "audio_spike",
-                    "intensity": "medium",
+                    "type": "音频高能点",
+                    "intensity": "中等",
                     "audio_intensity": a["intensity"]
                 })
-
+        #这部分处理未匹配到的视频候选点，只有视频没有音频的中等高能点
         for vi, v in enumerate(video_results):
             if vi not in used_video:
                 merged.append({
                     "time": v["time"],
-                    "type": "visual_spike",
-                    "intensity": "medium",
+                    "type": "视觉高能点",
+                    "intensity": "中等",
                     "video_intensity": v["intensity"]
                 })
 
